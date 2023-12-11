@@ -44,6 +44,7 @@ class IYUUAutoSeed(_IPluginModule):
     # 私有属性
     _scheduler = None
     downloader = None
+    dedupdownloader = None
     iyuuhelper = None
     sites = None
     # 限速开关
@@ -55,6 +56,7 @@ class IYUUAutoSeed(_IPluginModule):
     _sites = []
     _notify = False
     _nolabels = None
+    _withlabels = None
     _clearcache = False
     # 退出事件
     _event = Event()
@@ -142,6 +144,18 @@ class IYUUAutoSeed(_IPluginModule):
                                     'placeholder': '使用,分隔多个标签',
                                 }
                             ]
+                        },
+                        {
+                            'title': '辅种标签',
+                            'required': "",
+                            'tooltip': '下载器中的种子有以下标签时进行辅种，多个标签使用英文,分隔',
+                            'type': 'text',
+                            'content': [
+                                {
+                                    'id': 'withlabels',
+                                    'placeholder': '使用,分隔多个标签',
+                                }
+                            ]
                         }
                     ]
                 ]
@@ -155,6 +169,21 @@ class IYUUAutoSeed(_IPluginModule):
                     [
                         {
                             'id': 'downloaders',
+                            'type': 'form-selectgroup',
+                            'content': downloaders
+                        },
+                    ]
+                ]
+            },
+            {
+                'type': 'details',
+                'summary': '查重下载器',
+                'tooltip': '选中的下载器会参与辅种查重',
+                'content': [
+                    # 同一行
+                    [
+                        {
+                            'id': 'dedupdownloaders',
                             'type': 'form-selectgroup',
                             'content': downloaders
                         },
@@ -217,9 +246,11 @@ class IYUUAutoSeed(_IPluginModule):
             self._cron = config.get("cron")
             self._token = config.get("token")
             self._downloaders = config.get("downloaders")
+            self._dedupdownloaders = config.get("dedupdownloaders")
             self._sites = config.get("sites")
             self._notify = config.get("notify")
             self._nolabels = config.get("nolabels")
+            self._withlabels = config.get("withlabels")
             self._clearcache = config.get("clearcache")
             self._permanent_error_caches = config.get("permanent_error_caches") or []
             self._error_caches = [] if self._clearcache else config.get("error_caches") or []
@@ -363,9 +394,11 @@ class IYUUAutoSeed(_IPluginModule):
             "cron": self._cron,
             "token": self._token,
             "downloaders": self._downloaders,
+            "dedupdownloaders": self._dedupdownloaders,
             "sites": self._sites,
             "notify": self._notify,
             "nolabels": self._nolabels,
+            "withlabels": self._withlabels,
             "success_caches": self._success_caches,
             "error_caches": self._error_caches,
             "permanent_error_caches": self._permanent_error_caches
@@ -388,6 +421,26 @@ class IYUUAutoSeed(_IPluginModule):
         self.exist = 0
         self.fail = 0
         self.cached = 0
+
+        # 扫描查重下载器
+        dedup_hash_strs = []
+        if self._dedupdownloaders:
+            for dedupdownloader in list(set(self._dedupdownloaders).difference(self._downloaders)):
+                self.info(f"开始扫描查重下载器 {dedupdownloader} ...")
+                # 下载器类型
+                dedup_downloader_type = self.downloader.get_downloader_type(downloader_id=dedupdownloader)
+                # 获取下载器中已完成的种子
+                dedup_torrents = self.downloader.get_completed_torrents(downloader_id=dedupdownloader)
+                for dedup_torrent in dedup_torrents:
+                    if self._event.is_set():
+                        self.info(f"辅种服务停止")
+                        return
+                    dedup_hash_str = self.__get_hash(dedup_torrent, dedup_downloader_type)
+                    dedup_hash_strs.append({
+                        "hash": dedup_hash_str
+                    })
+        self.info(f"总共需要额外查重的种子数：{len(dedup_hash_strs)}")
+
         # 扫描下载器辅种
         for downloader in self._downloaders:
             self.info(f"开始扫描下载器 {downloader} ...")
@@ -417,11 +470,21 @@ class IYUUAutoSeed(_IPluginModule):
                     is_skip = False
                     for label in self._nolabels.split(','):
                         if label in torrent_labels:
-                            self.info(f"种子 {hash_str} 含有不转移标签 {label}，跳过 ...")
+                            self.info(f"种子 {hash_str} 含有不辅种标签 {label}，跳过 ...")
                             is_skip = True
                             break
                     if is_skip:
                         continue
+                if self._withlabels:
+                        is_skip = True
+                        if torrent_labels:
+                            for label in self._withlabels.split(','):
+                                if label in torrent_labels:
+                                    self.info(f"种子 {hash_str} 含有辅种标签 {label}，加入 ...")
+                                    is_skip = False
+                                    break
+                        if is_skip:
+                            continue
                 hash_strs.append({
                     "hash": hash_str,
                     "save_path": save_path
@@ -435,7 +498,8 @@ class IYUUAutoSeed(_IPluginModule):
                     chunk = hash_strs[i:i + chunk_size]
                     # 处理分组
                     self.__seed_torrents(hash_strs=chunk,
-                                         downloader=downloader)
+                                         downloader=downloader,
+                                         dedup_hash_strs=dedup_hash_strs)
                 # 触发校验检查
                 # self.check_recheck()
             else:
@@ -497,7 +561,7 @@ class IYUUAutoSeed(_IPluginModule):
                 self._recheck_torrents[downloader] = []
         self._is_recheck_running = False
 
-    def __seed_torrents(self, hash_strs: list, downloader):
+    def __seed_torrents(self, hash_strs: list, downloader, dedup_hash_strs: list):
         """
         执行一批种子的辅种
         """
@@ -506,6 +570,7 @@ class IYUUAutoSeed(_IPluginModule):
         self.info(f"下载器 {downloader} 开始查询辅种，数量：{len(hash_strs)} ...")
         # 下载器中的Hashs
         hashs = [item.get("hash") for item in hash_strs]
+        dedup_hashs = [item.get("hash") for item in dedup_hash_strs]
         # 每个Hash的保存目录
         save_paths = {}
         for item in hash_strs:
@@ -536,10 +601,13 @@ class IYUUAutoSeed(_IPluginModule):
                 if not seed.get("sid") or not seed.get("info_hash"):
                     continue
                 if seed.get("info_hash") in hashs:
-                    self.info(f"{seed.get('info_hash')} 已在下载器中，跳过 ...")
+                    self.info(f"种子 {seed.get('info_hash')} 已在下载器中，跳过 ...")
+                    continue
+                if seed.get("info_hash") in dedup_hashs:
+                    self.info(f"种子 {seed.get('info_hash')} 已在下载器中，跳过 ...")
                     continue
                 if seed.get("info_hash") in self._success_caches:
-                    self.info(f"{seed.get('info_hash')} 已处理过辅种，跳过 ...")
+                    self.info(f"种子 {seed.get('info_hash')} 已处理过辅种，跳过 ...")
                     continue
                 if seed.get("info_hash") in self._error_caches or seed.get("info_hash") in self._permanent_error_caches:
                     self.info(f"种子 {seed.get('info_hash')} 辅种失败且已缓存，跳过 ...")
