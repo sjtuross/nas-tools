@@ -52,6 +52,7 @@ class TorrentTransfer(_IPluginModule):
     _topath = None
     _notify = False
     _nolabels = None
+    _withlabels = None
     _nopaths = None
     _deletesource = False
     _fromtorrentpath = None
@@ -62,7 +63,7 @@ class TorrentTransfer(_IPluginModule):
     _recheck_torrents = {}
     _is_recheck_running = False
     # 任务标签
-    _torrent_tags = ["已整理", "转移做种"]
+    _torrent_tags = ["转移做种"]
 
     @staticmethod
     def get_fields():
@@ -99,11 +100,23 @@ class TorrentTransfer(_IPluginModule):
                         {
                             'title': '不转移种子标签',
                             'required': "",
-                            'tooltip': '下载器中的种子有以下标签时不进行移转做种，多个标签使用英文,分隔',
+                            'tooltip': '下载器中的种子有以下标签时不进行转移做种，多个标签使用英文,分隔',
                             'type': 'text',
                             'content': [
                                 {
                                     'id': 'nolabels',
+                                    'placeholder': '使用,分隔多个标签',
+                                }
+                            ]
+                        },
+                        {
+                            'title': '转移种子标签',
+                            'required': "",
+                            'tooltip': '下载器中的种子有以下标签时进行转移做种，多个标签使用英文,分隔',
+                            'type': 'text',
+                            'content': [
+                                {
+                                    'id': 'withlabels',
                                     'placeholder': '使用,分隔多个标签',
                                 }
                             ]
@@ -281,6 +294,7 @@ class TorrentTransfer(_IPluginModule):
             self._cron = config.get("cron")
             self._notify = config.get("notify")
             self._nolabels = config.get("nolabels")
+            self._withlabels = config.get("withlabels")
             self._frompath = config.get("frompath")
             self._topath = config.get("topath")
             self._fromdownloader = config.get("fromdownloader")
@@ -326,6 +340,7 @@ class TorrentTransfer(_IPluginModule):
                     "cron": self._cron,
                     "notify": self._notify,
                     "nolabels": self._nolabels,
+                    "withlabels": self._withlabels,
                     "frompath": self._frompath,
                     "topath": self._topath,
                     "fromdownloader": self._fromdownloader,
@@ -405,6 +420,16 @@ class TorrentTransfer(_IPluginModule):
                         self.info(f"种子 {hash_str} 含有不转移标签 {label}，跳过 ...")
                         is_skip = True
                         break
+                if is_skip:
+                    continue
+            if self._withlabels:
+                is_skip = True
+                if torrent_labels:
+                    for label in self._withlabels.split(','):
+                        if label in torrent_labels:
+                            self.info(f"种子 {hash_str} 含有转移标签 {label}，加入 ...")
+                            is_skip = False
+                            break
                 if is_skip:
                     continue
             hash_strs.append({
@@ -495,7 +520,8 @@ class TorrentTransfer(_IPluginModule):
                 _, download_id, retmsg = self.downloader.download(
                     media_info=MetaInfo("自动转移做种"),
                     torrent_file=torrent_file,
-                    is_paused=True,
+                    is_paused=False,
+                    is_skip_checking=True,
                     tag=deepcopy(self._torrent_tags),
                     downloader_id=todownloader,
                     download_dir=download_dir,
@@ -517,9 +543,9 @@ class TorrentTransfer(_IPluginModule):
                     # 下载成功
                     self.info(f"成功添加转移做种任务，种子文件：{torrent_file}")
                     # TR会自动校验
-                    if to_downloader_type == DownloaderType.QB:
+                    # if to_downloader_type == DownloaderType.QB:
                         # 开始校验种子
-                        self.downloader.recheck_torrents(downloader_id=todownloader, ids=[download_id])
+                        # self.downloader.recheck_torrents(downloader_id=todownloader, ids=[download_id])
                     # 删除源种子，不能删除文件！
                     if self._deletesource:
                         self.downloader.delete_torrents(downloader_id=downloader,

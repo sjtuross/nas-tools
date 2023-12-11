@@ -257,6 +257,7 @@ class Downloader:
     def download(self,
                  media_info,
                  is_paused=None,
+                 is_skip_checking=None,
                  tag=None,
                  download_dir=None,
                  download_setting=None,
@@ -271,6 +272,7 @@ class Downloader:
         添加下载任务，根据当前使用的下载器分别调用不同的客户端处理
         :param media_info: 需下载的媒体信息，含URL地址
         :param is_paused: 是否暂停下载
+        :param is_skip_checking: 是否跳检验
         :param tag: 种子标签
         :param download_dir: 指定下载目录
         :param download_setting: 下载设置id，为None则使用-1默认设置，为"-2"则不使用下载设置
@@ -465,6 +467,7 @@ class Downloader:
                 # 布局默认原始
                 ret = downloader.add_torrent(content,
                                              is_paused=is_paused,
+                                             is_skip_checking=is_skip_checking,
                                              download_dir=download_dir,
                                              tag=tags,
                                              category=category,

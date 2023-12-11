@@ -66,7 +66,7 @@ class IYUUAutoSeed(_IPluginModule):
         "//a[@class='index'][contains(@href, '/dl/')]/@href",
         "//input[@title='DirectLink']/@value",
     ]
-    _torrent_tags = ["已整理", "辅种"]
+    _torrent_tags = ["IYUU"]
     # 待校全种子hash清单
     _recheck_torrents = {}
     _is_recheck_running = False
@@ -255,7 +255,7 @@ class IYUUAutoSeed(_IPluginModule):
 
             if self._scheduler.get_jobs():
                 # 追加种子校验服务
-                self._scheduler.add_job(self.check_recheck, 'interval', minutes=3)
+                # self._scheduler.add_job(self.check_recheck, 'interval', minutes=3)
                 # 启动服务
                 self._scheduler.print_jobs()
                 self._scheduler.start()
@@ -437,7 +437,7 @@ class IYUUAutoSeed(_IPluginModule):
                     self.__seed_torrents(hash_strs=chunk,
                                          downloader=downloader)
                 # 触发校验检查
-                self.check_recheck()
+                # self.check_recheck()
             else:
                 self.info(f"没有需要辅种的种子")
         # 保存缓存
@@ -670,7 +670,8 @@ class IYUUAutoSeed(_IPluginModule):
         # 辅种任务默认暂停
         _, download_id, retmsg = self.downloader.download(
             media_info=meta_info,
-            is_paused=True,
+            is_paused=False,
+            is_skip_checking=True,
             tag=deepcopy(self._torrent_tags),
             downloader_id=downloader,
             download_dir=save_path,
@@ -700,9 +701,9 @@ class IYUUAutoSeed(_IPluginModule):
             self.info(f"成功添加辅种下载，站点：{site_info.get('name')}，种子链接：{torrent_url}")
             # TR会自动校验
             downloader_type = self.downloader.get_downloader_type(downloader_id=downloader)
-            if downloader_type == DownloaderType.QB:
+            # if downloader_type == DownloaderType.QB:
                 # 开始校验种子
-                self.downloader.recheck_torrents(downloader_id=downloader, ids=[download_id])
+                # self.downloader.recheck_torrents(downloader_id=downloader, ids=[download_id])
 
             # 成功也加入缓存，有一些改了路径校验不通过的，手动删除后，下一次又会辅上
             self._success_caches.append(seed.get("info_hash"))
